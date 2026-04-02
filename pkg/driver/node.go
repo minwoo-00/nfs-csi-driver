@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -31,12 +32,10 @@ func (n *NodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	path := volContext["path"]
 	source := fmt.Sprintf("%s:%s", server, path)
 
-	// 마운트 포인트 디렉토리 생성
 	if err := os.MkdirAll(targetPath, 0750); err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create target path: %v", err)
 	}
 
-	// NFS 마운트 실행
 	cmd := exec.Command("mount", "-t", "nfs", source, targetPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to mount NFS: %v, output: %s", err, out)
@@ -62,28 +61,46 @@ func (n *NodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
-// 볼륨 사용량 측정 → Prometheus 메트릭 업데이트 (차별점 기능!)
+// 볼륨 사용량 측정 → Prometheus 메트릭 업데이트
 func (n *NodeServer) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
 	volumePath := req.GetVolumePath()
 	volumeID := req.GetVolumeId()
 
+	// 1. PV 디렉토리 실제 사용량 (du 방식)
+	out, err := exec.Command("du", "-sb", volumePath).Output()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to get volume usage: %v", err)
+	}
+	var used int64
+	fmt.Sscanf(string(out), "%d", &used)
+
+	// 2. NFS 서버 전체 통계 (Statfs 방식)
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(volumePath, &stat); err != nil {
-		return nil, status.Errorf(codes.Internal, "Failed to get volume stats: %v", err)
+		return nil, status.Errorf(codes.Internal, "Failed to get fs stats: %v", err)
 	}
-
 	total := int64(stat.Blocks) * int64(stat.Bsize)
 	free := int64(stat.Bfree) * int64(stat.Bsize)
-	used := total - free
 
-	// Prometheus 메트릭 업데이트
+	// 3. capacity 파일에서 PVC 요청 용량 읽기
+	var capacityBytes int64
+	capacityFile := filepath.Join(volumePath, ".capacity")
+	if data, err := os.ReadFile(capacityFile); err == nil {
+		fmt.Sscanf(string(data), "%d", &capacityBytes)
+	} else {
+		klog.Warningf("Failed to read capacity file: %v", err)
+	}
+
+	// 4. Prometheus 메트릭 업데이트
 	metrics.VolumeUsedBytes.WithLabelValues(volumeID).Set(float64(used))
-	metrics.VolumeTotalBytes.WithLabelValues(volumeID).Set(float64(total))
+	metrics.NFSTotalBytes.Set(float64(total))
+	metrics.NFSUsedBytes.Set(float64(total - free))
+	metrics.NFSAvailableBytes.Set(float64(free))
 
-	// 80% 임계치 초과 시 알림 메트릭 설정
-	if total > 0 && float64(used)/float64(total) > 0.8 {
+	// 5. PVC 요청 용량 기준 80% 임계치 체크
+	if capacityBytes > 0 && float64(used)/float64(capacityBytes) > 0.8 {
 		metrics.VolumeUsageAlert.WithLabelValues(volumeID).Set(1)
-		klog.Warningf("Volume %s usage exceeds 80%%: %d/%d bytes", volumeID, used, total)
+		klog.Warningf("Volume %s usage exceeds 80%% of requested capacity: %d/%d bytes", volumeID, used, capacityBytes)
 	} else {
 		metrics.VolumeUsageAlert.WithLabelValues(volumeID).Set(0)
 	}
@@ -91,9 +108,9 @@ func (n *NodeServer) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVol
 	return &csi.NodeGetVolumeStatsResponse{
 		Usage: []*csi.VolumeUsage{
 			{
-				Total:     total,
+				Total:     capacityBytes,
 				Used:      used,
-				Available: free,
+				Available: capacityBytes - used,
 				Unit:      csi.VolumeUsage_BYTES,
 			},
 		},

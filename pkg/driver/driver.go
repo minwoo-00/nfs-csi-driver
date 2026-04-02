@@ -4,12 +4,12 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sync"
 
+	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/seminar/nfs-csi-driver/pkg/metrics"
 	"google.golang.org/grpc"
 	"k8s.io/klog/v2"
-
-	"github.com/container-storage-interface/spec/lib/go/csi"
 )
 
 const (
@@ -22,6 +22,8 @@ type Driver struct {
 	nfsServer   string
 	nfsBasePath string
 	metricsPort int
+	volumeSizes map[string]int64 // volumeID → 요청 용량
+	mu          sync.Mutex
 }
 
 func New(nodeID, nfsServer, nfsBasePath string, metricsPort int) *Driver {
@@ -30,20 +32,18 @@ func New(nodeID, nfsServer, nfsBasePath string, metricsPort int) *Driver {
 		nfsServer:   nfsServer,
 		nfsBasePath: nfsBasePath,
 		metricsPort: metricsPort,
+		volumeSizes: make(map[string]int64),
 	}
 }
 
 func (d *Driver) Run(endpoint string) {
-	// Prometheus 메트릭 서버 시작
 	go metrics.StartMetricsServer(d.metricsPort)
 
-	// Unix 소켓 파싱
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		klog.Fatalf("Invalid endpoint: %v", err)
 	}
 
-	// 기존 소켓 파일 제거
 	if u.Scheme == "unix" {
 		if err := os.Remove(u.Path); err != nil && !os.IsNotExist(err) {
 			klog.Fatalf("Failed to remove socket: %v", err)
@@ -56,8 +56,6 @@ func (d *Driver) Run(endpoint string) {
 	}
 
 	server := grpc.NewServer()
-
-	// 세 가지 서비스 등록
 	csi.RegisterIdentityServer(server, &IdentityServer{driver: d})
 	csi.RegisterControllerServer(server, &ControllerServer{driver: d})
 	csi.RegisterNodeServer(server, &NodeServer{driver: d})

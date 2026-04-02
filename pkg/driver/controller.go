@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/seminar/nfs-csi-driver/pkg/metrics"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
@@ -26,17 +27,30 @@ func (c *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 	volumeID := req.GetName()
 	volPath := filepath.Join(c.driver.nfsBasePath, volumeID)
 
-	// NFS 서버의 디렉토리 생성
 	if err := os.MkdirAll(volPath, 0777); err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create volume dir: %v", err)
 	}
 
-	klog.Infof("CreateVolume: created directory %s", volPath)
+	// 요청 용량
+	capacityBytes := req.GetCapacityRange().GetRequiredBytes()
+
+	// capacity 파일 저장 (NodeGetVolumeStats에서 읽기 위해)
+	capacityFile := filepath.Join(volPath, ".capacity")
+	if err := os.WriteFile(capacityFile, []byte(fmt.Sprintf("%d", capacityBytes)), 0644); err != nil {
+		klog.Warningf("Failed to write capacity file: %v", err)
+	}
+
+	// 오퍼레이션 카운터 증가
+	metrics.VolumeOperationsTotal.WithLabelValues("create").Inc()
+	// 활성 볼륨 수 증가
+	metrics.VolumesTotal.Inc()
+
+	klog.Infof("CreateVolume: created directory %s (capacity: %d bytes)", volPath, capacityBytes)
 
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
 			VolumeId:      volumeID,
-			CapacityBytes: req.GetCapacityRange().GetRequiredBytes(),
+			CapacityBytes: capacityBytes,
 			VolumeContext: map[string]string{
 				"server": c.driver.nfsServer,
 				"path":   fmt.Sprintf("%s/%s", c.driver.nfsBasePath, volumeID),
@@ -57,6 +71,11 @@ func (c *ControllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolu
 		return nil, status.Errorf(codes.Internal, "Failed to delete volume dir: %v", err)
 	}
 
+	// 오퍼레이션 카운터 증가
+	metrics.VolumeOperationsTotal.WithLabelValues("delete").Inc()
+	// 활성 볼륨 수 감소
+	metrics.VolumesTotal.Dec()
+
 	klog.Infof("DeleteVolume: removed directory %s", volPath)
 	return &csi.DeleteVolumeResponse{}, nil
 }
@@ -74,7 +93,6 @@ func (c *ControllerServer) ValidateVolumeCapabilities(ctx context.Context, req *
 	}, nil
 }
 
-// 아래는 구현 안 하는 메서드들 (인터페이스 충족용)
 func (c *ControllerServer) ListVolumes(ctx context.Context, req *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "")
 }

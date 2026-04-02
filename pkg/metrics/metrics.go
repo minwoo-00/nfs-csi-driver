@@ -11,20 +11,45 @@ import (
 )
 
 var (
+	// PV별 사용량 (du 방식)
 	VolumeUsedBytes = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "csi_volume_used_bytes",
-		Help: "Used bytes of CSI volume",
+		Help: "Used bytes of each CSI volume directory",
 	}, []string{"volume_id"})
 
-	VolumeTotalBytes = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "csi_volume_total_bytes",
-		Help: "Total bytes of CSI volume",
-	}, []string{"volume_id"})
-
+	// PV별 임계치 알림
 	VolumeUsageAlert = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "csi_volume_usage_alert",
-		Help: "1 if volume usage exceeds 80%",
+		Help: "1 if volume usage exceeds 80% of NFS total",
 	}, []string{"volume_id"})
+
+	// NFS 서버 전체 현황
+	NFSTotalBytes = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "csi_nfs_total_bytes",
+		Help: "Total bytes of NFS server disk",
+	})
+
+	NFSUsedBytes = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "csi_nfs_used_bytes",
+		Help: "Used bytes of NFS server disk",
+	})
+
+	NFSAvailableBytes = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "csi_nfs_available_bytes",
+		Help: "Available bytes of NFS server disk",
+	})
+
+	// 활성 볼륨 수
+	VolumesTotal = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "csi_volumes_total",
+		Help: "Total number of active CSI volumes",
+	})
+
+	// 오퍼레이션 카운터
+	VolumeOperationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "csi_volume_operations_total",
+		Help: "Total number of CSI volume operations",
+	}, []string{"operation"})
 )
 
 func StartMetricsServer(port int) {
