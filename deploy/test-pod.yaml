@@ -5,8 +5,7 @@ metadata:
 spec:
   containers:
     - name: test-container
-      image: busybox
-      command: ["sh", "-c", "while true; do sleep 3600; done"]
+      image: nginx:alpine
       volumeMounts:
         - name: nfs-volume
           mountPath: /data

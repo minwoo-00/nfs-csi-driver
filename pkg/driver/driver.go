@@ -27,13 +27,15 @@ type Driver struct {
 }
 
 func New(nodeID, nfsServer, nfsBasePath string, metricsPort int) *Driver {
-	return &Driver{
+	d := &Driver{
 		nodeID:      nodeID,
 		nfsServer:   nfsServer,
 		nfsBasePath: nfsBasePath,
 		metricsPort: metricsPort,
 		volumeSizes: make(map[string]int64),
 	}
+	d.initVolumeCount()
+	return d
 }
 
 func (d *Driver) initVolumeCount() {
