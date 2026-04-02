@@ -36,6 +36,23 @@ func New(nodeID, nfsServer, nfsBasePath string, metricsPort int) *Driver {
 	}
 }
 
+func (d *Driver) initVolumeCount() {
+	entries, err := os.ReadDir(d.nfsBasePath)
+	if err != nil {
+		klog.Warningf("Failed to read nfs base path: %v", err)
+		return
+	}
+
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			count++
+		}
+	}
+	metrics.VolumesTotal.Set(float64(count))
+	klog.Infof("Initialized volume count: %d", count)
+}
+
 func (d *Driver) Run(endpoint string) {
 	go metrics.StartMetricsServer(d.metricsPort)
 

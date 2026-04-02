@@ -32,6 +32,9 @@ spec:
       containers:
         - name: csi-driver
           image: cho2689/nfs-csi-driver:latest
+          ports:
+            - name: metrics
+              containerPort: 9090
           args:
             - --endpoint=unix:///csi/csi.sock
             - --nodeid=$(NODE_ID)
