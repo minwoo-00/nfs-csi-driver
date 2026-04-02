@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-csi-controller
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nfs-csi-controller
+  template:
+    metadata:
+      labels:
+        app: nfs-csi-controller
+    spec:
+      serviceAccountName: nfs-csi-controller-sa
+      imagePullSecrets:
+        - name: dockerhub-secret
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+        - name: nfs-data-dir
+          hostPath:
+            path: /srv/nfs-data
+            type: Directory
+      containers:
+        - name: csi-driver
+          image: cho2689/nfs-csi-driver:latest
+          args:
+            - --endpoint=unix:///csi/csi.sock
+            - --nodeid=$(NODE_ID)
+            - --nfs-server=10.0.2.15
+            - --nfs-base-path=/srv/nfs-data
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: nfs-data-dir
+              mountPath: /srv/nfs-data
+          imagePullPolicy: Always
+
+        - name: external-provisioner
+          image: registry.k8s.io/sig-storage/csi-provisioner:v4.0.0
+          args:
+            - --csi-address=/csi/csi.sock
+            - --v=2
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi

@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nfs-csi-node
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: nfs-csi-node
+  template:
+    metadata:
+      labels:
+        app: nfs-csi-node
+    spec:
+      imagePullSecrets:
+        - name: dockerhub-secret
+      volumes:
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/nfs.csi.seminar.dev
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: Directory
+        - name: pods-mount-dir
+          hostPath:
+            path: /var/lib/kubelet/pods
+            type: Directory
+      containers:
+        - name: csi-driver
+          image: cho2689/nfs-csi-driver:latest
+          args:
+            - --endpoint=unix:///csi/csi.sock
+            - --nodeid=$(NODE_ID)
+            - --nfs-server=10.0.2.15
+            - --nfs-base-path=/srv/nfs-data
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: pods-mount-dir
+              mountPath: /var/lib/kubelet/pods
+              mountPropagation: Bidirectional
+          imagePullPolicy: Always
+
+        - name: node-driver-registrar
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.10.0
+          args:
+            - --csi-address=/csi/csi.sock
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/nfs.csi.seminar.dev/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
