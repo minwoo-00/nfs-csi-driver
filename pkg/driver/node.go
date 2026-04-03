@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/seminar/nfs-csi-driver/pkg/metrics"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -53,10 +54,16 @@ func (n *NodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 		return nil, status.Error(codes.InvalidArgument, "Target path is required")
 	}
 
+	volumeID := req.GetVolumeId()
+
 	cmd := exec.Command("umount", targetPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to umount: %v, output: %s", err, out)
 	}
+
+	// 메트릭 삭제
+	metrics.VolumeUsedBytes.DeletePartialMatch(prometheus.Labels{"volume_id": volumeID})
+	metrics.VolumeUsageAlert.DeletePartialMatch(prometheus.Labels{"volume_id": volumeID})
 
 	klog.Infof("NodeUnpublishVolume: unmounted %s", targetPath)
 	return &csi.NodeUnpublishVolumeResponse{}, nil
