@@ -31,21 +31,25 @@ func (c *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		return nil, status.Errorf(codes.Internal, "Failed to create volume dir: %v", err)
 	}
 
-	// 요청 용량
 	capacityBytes := req.GetCapacityRange().GetRequiredBytes()
 
-	// capacity 파일 저장 (NodeGetVolumeStats에서 읽기 위해)
+	// PVC 이름/네임스페이스 추출
+	params := req.GetParameters()
+	pvcName := params["csi.storage.k8s.io/pvc/name"]
+	pvcNamespace := params["csi.storage.k8s.io/pvc/namespace"]
+
+	// capacity 파일에 용량 + PVC 정보 저장
 	capacityFile := filepath.Join(volPath, ".capacity")
-	if err := os.WriteFile(capacityFile, []byte(fmt.Sprintf("%d", capacityBytes)), 0644); err != nil {
+	content := fmt.Sprintf("%d\n%s\n%s", capacityBytes, pvcName, pvcNamespace)
+	if err := os.WriteFile(capacityFile, []byte(content), 0644); err != nil {
 		klog.Warningf("Failed to write capacity file: %v", err)
 	}
 
-	// 오퍼레이션 카운터 증가
 	metrics.VolumeOperationsTotal.WithLabelValues("create").Inc()
-	// 활성 볼륨 수 증가
 	metrics.VolumesTotal.Inc()
 
-	klog.Infof("CreateVolume: created directory %s (capacity: %d bytes)", volPath, capacityBytes)
+	klog.Infof("CreateVolume: created directory %s (pvc: %s/%s, capacity: %d bytes)",
+		volPath, pvcNamespace, pvcName, capacityBytes)
 
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{

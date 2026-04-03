@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -82,27 +83,38 @@ func (n *NodeServer) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVol
 	total := int64(stat.Blocks) * int64(stat.Bsize)
 	free := int64(stat.Bfree) * int64(stat.Bsize)
 
-	// 3. capacity 파일에서 PVC 요청 용량 읽기
+	// 3. capacity 파일에서 용량 + PVC 정보 읽기
 	var capacityBytes int64
+	var pvcName, pvcNamespace string
 	capacityFile := filepath.Join(volumePath, ".capacity")
 	if data, err := os.ReadFile(capacityFile); err == nil {
-		fmt.Sscanf(string(data), "%d", &capacityBytes)
+		lines := strings.Split(string(data), "\n")
+		if len(lines) >= 1 {
+			fmt.Sscanf(lines[0], "%d", &capacityBytes)
+		}
+		if len(lines) >= 2 {
+			pvcName = strings.TrimSpace(lines[1])
+		}
+		if len(lines) >= 3 {
+			pvcNamespace = strings.TrimSpace(lines[2])
+		}
 	} else {
 		klog.Warningf("Failed to read capacity file: %v", err)
 	}
 
 	// 4. Prometheus 메트릭 업데이트
-	metrics.VolumeUsedBytes.WithLabelValues(volumeID).Set(float64(used))
+	metrics.VolumeUsedBytes.WithLabelValues(volumeID, pvcName, pvcNamespace).Set(float64(used))
 	metrics.NFSTotalBytes.Set(float64(total))
 	metrics.NFSUsedBytes.Set(float64(total - free))
 	metrics.NFSAvailableBytes.Set(float64(free))
 
 	// 5. PVC 요청 용량 기준 80% 임계치 체크
 	if capacityBytes > 0 && float64(used)/float64(capacityBytes) > 0.8 {
-		metrics.VolumeUsageAlert.WithLabelValues(volumeID).Set(1)
-		klog.Warningf("Volume %s usage exceeds 80%% of requested capacity: %d/%d bytes", volumeID, used, capacityBytes)
+		metrics.VolumeUsageAlert.WithLabelValues(volumeID, pvcName, pvcNamespace).Set(1)
+		klog.Warningf("Volume %s(%s/%s) usage exceeds 80%%: %d/%d bytes",
+			volumeID, pvcNamespace, pvcName, used, capacityBytes)
 	} else {
-		metrics.VolumeUsageAlert.WithLabelValues(volumeID).Set(0)
+		metrics.VolumeUsageAlert.WithLabelValues(volumeID, pvcName, pvcNamespace).Set(0)
 	}
 
 	return &csi.NodeGetVolumeStatsResponse{

@@ -15,13 +15,13 @@ var (
 	VolumeUsedBytes = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "csi_volume_used_bytes",
 		Help: "Used bytes of each CSI volume directory",
-	}, []string{"volume_id"})
+	}, []string{"volume_id", "pvc_name", "pvc_namespace"})
 
 	// PV별 임계치 알림
 	VolumeUsageAlert = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "csi_volume_usage_alert",
 		Help: "1 if volume usage exceeds 80% of NFS total",
-	}, []string{"volume_id"})
+	}, []string{"volume_id", "pvc_name", "pvc_namespace"})
 
 	// NFS 서버 전체 현황
 	NFSTotalBytes = promauto.NewGauge(prometheus.GaugeOpts{
