@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/seminar/nfs-csi-driver/pkg/metrics"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -75,9 +76,11 @@ func (c *ControllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolu
 		return nil, status.Errorf(codes.Internal, "Failed to delete volume dir: %v", err)
 	}
 
-	// 오퍼레이션 카운터 증가
+	// 메트릭 삭제
+	metrics.VolumeUsedBytes.DeletePartialMatch(prometheus.Labels{"volume_id": req.GetVolumeId()})
+	metrics.VolumeUsageAlert.DeletePartialMatch(prometheus.Labels{"volume_id": req.GetVolumeId()})
+
 	metrics.VolumeOperationsTotal.WithLabelValues("delete").Inc()
-	// 활성 볼륨 수 감소
 	metrics.VolumesTotal.Dec()
 
 	klog.Infof("DeleteVolume: removed directory %s", volPath)
